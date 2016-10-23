@@ -1,0 +1,9 @@
+name: pva-app
+account: nblumoe
+server: shinyapps.io
+appId: 133298
+bundleId: 594183
+url: https://nblumoe.shinyapps.io/pva-app/
+when: 1477234975.30882
+asMultiple: FALSE
+asStatic: FALSE
