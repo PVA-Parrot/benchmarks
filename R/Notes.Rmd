@@ -1,0 +1,16 @@
+---
+title: "Notes"
+author: "Dr. Nils Blum-Oeste"
+date: "10/23/2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Checked the PVA calculations against the reference implementation again.
+Normalization of the data works as intended and is identical to the reference (range normalization).
+
+However, eigenvalues and eigenvectors are still quite far off. Eigenvalues more so than eigenvectors.
+I used `prcomp` as well as `eigen(cov(x))` which yield similar results but do not match the reference at all.
