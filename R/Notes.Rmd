@@ -2,11 +2,19 @@
 title: "Notes"
 author: "Dr. Nils Blum-Oeste"
 date: "10/23/2016"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    collapsed: false
+    df_print: paged
 ---
+
+## Current State
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+# library(knitr)
 ```
 
 Checked the PVA calculations against the reference implementation again.
@@ -14,3 +22,52 @@ Normalization of the data works as intended and is identical to the reference (r
 
 However, eigenvalues and eigenvectors are still quite far off. Eigenvalues more so than eigenvectors.
 I used `prcomp` as well as `eigen(cov(x))` which yield similar results but do not match the reference at all.
+
+## Data Import
+
+```{r}
+csvdata <-  read.csv("3EM20v30s.csv", header = T)[c(-1)]
+
+```
+
+## Function Definitions
+
+### Normalization
+
+A function to do the range based normalization of data:
+
+```{r}
+normalize <- function(data) {
+  mins <- sapply(data, min)
+  maxs <- sapply(data, max)
+  spread <- maxs - mins
+  t((t(data) - mins) / spread)
+}
+```
+
+## Calculations
+
+Calculate principal components from normalized data without centering and scaling. Also correct the denominator of SD:
+
+```{r}
+normalized <- normalize(csvdata)
+pca <- prcomp(normalized, center = F, scale = F)
+  
+# PVA software uses n as a denominator in SD, we need to correct for this
+pca$sdev <- pca$sdev * (1-1/length(normalized))
+```
+
+## Results {.tabset}
+
+### Eigenvalues
+
+```{r echo=FALSE}
+data.frame(t(unlist(pca$sdev ^ 2)))
+```
+
+### Eigenvectors
+
+```{r echo=FALSE}
+data.frame(pca$rotation)
+```
+
