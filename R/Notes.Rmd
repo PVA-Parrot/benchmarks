@@ -7,7 +7,7 @@ output:
     toc: true
     toc_float: true
     collapsed: false
-    df_print: paged
+    df_print: kable
 ---
 
 ## Current State
@@ -21,16 +21,20 @@ Checked the PVA calculations against the reference implementation again.
 Normalization of the data works as intended and is identical to the reference (range normalization).
 
 However, eigenvalues and eigenvectors are still quite far off. Eigenvalues more so than eigenvectors.
-I used `prcomp` as well as `eigen(cov(x))` which yield similar results but do not match the reference at all.
+I used `prcomp` as well as `eigen(cov(x))` which yield similar results but do not match the reference at all. Below the values are slightly different because `prcomp` results are corrected for the denominator `n` being used for standard deviations by the reference implementation of PVA.
 
-## Data Import
+When disabling centering for `prcomp` (which centers the data at 0 by subtracting the means), the Eigenvectors are quite close to the reference implementation, but not the Eigenvalues.
+
+## Data Preparation
+
+### Import
+
+Use first row as headers and ignore the first columns (sample names).
 
 ```{r}
 csvdata <-  read.csv("3EM20v30s.csv", header = T)[c(-1)]
 
 ```
-
-## Function Definitions
 
 ### Normalization
 
@@ -43,31 +47,144 @@ normalize <- function(data) {
   spread <- maxs - mins
   t((t(data) - mins) / spread)
 }
+
+normalized <- normalize(csvdata)
 ```
 
-## Calculations
+## PCA based on SVD (with centering)
 
 Calculate principal components from normalized data without centering and scaling. Also correct the denominator of SD:
 
 ```{r}
-normalized <- normalize(csvdata)
-pca <- prcomp(normalized, center = F, scale = F)
+pca <- prcomp(normalized, center = T, scale = F)
   
 # PVA software uses n as a denominator in SD, we need to correct for this
 pca$sdev <- pca$sdev * (1-1/length(normalized))
+pca$eigenvalues <- (pca$sdev ^ 2)
 ```
 
-## Results {.tabset}
+### Results {.tabset}
 
-### Eigenvalues
+#### Eigenvalues
 
 ```{r echo=FALSE}
-data.frame(t(unlist(pca$sdev ^ 2)))
+data.frame(t(unlist(pca$eigenvalues)))
 ```
 
-### Eigenvectors
+#### Eigenvectors
 
 ```{r echo=FALSE}
 data.frame(pca$rotation)
 ```
 
+## PCA based on SVD (without centering)
+
+Principal component analysis without(!) centering:
+
+```{r}
+pcaNotCentered <- prcomp(normalized, center = F, scale = F)
+  
+# PVA software uses n as a denominator in SD, we need to correct for this
+pcaNotCentered$sdev <- pcaNotCentered$sdev * (1-1/length(normalized))
+pcaNotCentered$eigenvalues <- (pcaNotCentered$sdev ^ 2)
+```
+
+### Results {.tabset}
+
+#### Eigenvalues
+
+```{r echo=FALSE}
+data.frame(t(unlist(pcaNotCentered$eigenvalues)))
+```
+
+#### Eigenvectors
+
+```{r echo=FALSE}
+data.frame(pcaNotCentered$rotation)
+```
+
+
+## PCA based on SVD (without centering but transposed)
+
+With transposed data and using scaling, we yield Eigenvalues that sum up roughly to the number of samples:
+
+```{r}
+pcaNotCenteredT <- prcomp(t(normalized), center = F, scale = T)
+
+pcaNotCenteredT$eigenvalues <- (pcaNotCenteredT$sdev ^ 2)
+```
+
+### Results {.tabset}
+
+#### Eigenvalues
+
+```{r echo=FALSE}
+data.frame(t(unlist(pcaNotCenteredT$eigenvalues)))
+```
+
+#### Eigenvectors
+
+```{r echo=FALSE}
+data.frame(pcaNotCenteredT$rotation)
+```
+
+
+## Eigen Decomposition
+
+Alternatively calculate via Eigenvector Decomposition of the Covariance matrix:
+
+```{r}
+eigendecomp <- eigen(cov(normalized))
+```
+### Results {.tabset}
+
+#### Eigenvalues
+```{r echo=FALSE}
+data.frame(t(unlist(eigendecomp$values)))
+```
+
+#### Eigenvectors
+```{r echo=FALSE}
+data.frame(eigendecomp$vectors)
+```
+
+<!-- ## SVD -->
+
+<!-- ```{r} -->
+<!-- means <- sapply(normalized, mean) -->
+<!-- centered <- t(t(normalized) - means) -->
+<!-- s <- svd(cov(centered)) -->
+<!-- ``` -->
+
+<!-- ### Results {.tabset} -->
+
+<!-- #### Eigenvalues -->
+<!-- ```{r echo=FALSE} -->
+<!-- data.frame(t(unlist(s$d))) -->
+<!-- ``` -->
+
+<!-- #### Eigenvectors -->
+<!-- ```{r echo=FALSE} -->
+<!-- data.frame(s$u) -->
+<!-- ``` -->
+
+## Reference Results {.tabset}
+
+Sample set: 3EM20v30s
+File: wide_vsp.out
+
+### Eigenvalues
+
+    No.            Eigenvalue    Cum. Var 
+     1                23.6001      78.67
+     2                 4.1237      92.41
+     3                 2.2761     100.00
+     4                 0.0000     100.00
+     
+### Eigenvectors
+
+Principal Axis End-Member Composition Matrix 
+
+```{r echo=FALSE}
+read.table("wide_vsp_out_eigenvectors.tsv")
+```
