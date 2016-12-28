@@ -1,0 +1,239 @@
+---
+title: "Q-Mode Miesch 1976"
+author: "Dr. Nils Blum-Oeste"
+date: "12/28/2016"
+bibliography: pva.bib
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    collapsed: false
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Introduction
+
+This notebook serves as a reference implementation of the Q-Mode analysis in R as described by @miesch_q-mode_1976.
+
+# Definition of original example data
+
+```{r}
+original_data = tibble (
+  x1 = c(90,50,80,60,85,95),
+  x2 = c(7, 10, 15, 30, 10, 3),
+  x3 = c(3, 40, 5, 10, 5, 2)
+)
+
+original_data
+```
+
+
+# Transformation and Normalization
+## Range-Transformation
+
+Get $xmin$ and $xmax$ values:
+
+```{r}
+mins_maxs <- function (data) {
+  tibble(
+    variable = colnames(original_data),
+    min = sapply(original_data, min),
+    max = sapply(original_data, max)
+  )
+}
+mins_maxs(original_data)
+```
+
+Transform the data to proportions of the range of each variable:
+
+$x'_{ij}=(x_{ij}-xmin_j)/(xmax_j-xmin_j)$
+
+```{r}
+range_transformed <- function(data) {
+  minmax <- mins_maxs(original_data)
+  mins <- minmax$min
+  maxs <- minmax$max
+  t((t(data) - mins) / (maxs - mins)) %>%
+    as_tibble()
+}
+range_transformed(original_data)
+```
+
+The range transformed data is identical to the data in @miesch_q-mode_1976 [, Table 1C].
+
+## Normalization factors $t_i$
+
+$t_i = \sqrt{\displaystyle\sum_{j}{x'^{2}_{ij}}}$
+
+```{r}
+normalization_factors <- function(data) {
+  data %>%
+    range_transformed() %>%
+    transmute(ti = Reduce(function(u, v){u+v**2}, ., 0)**0.5) %>%
+    as_vector()
+}
+
+normalization_factors(original_data)
+```
+
+## Normalized and transformed data
+
+
+```{r}
+normalize_and_transform <- function(data) {
+  range_transformed(data) / 
+    normalization_factors(data)
+}
+
+normalize_and_transform(original_data)
+```
+
+These values also match the ones by @miesch_q-mode_1976 [, Table 1C].
+
+# Q-Mode Factor Analysis
+
+Initial loadings $a_{ij}$:
+
+```{r}
+initial_loadings <- function(data) {
+  prcomp(normalize_and_transform(data), center = F, scale = F)$x
+}
+initial_loadings(original_data)
+```
+
+
+## Unscaled factor scores $f''_{kj}$
+
+The following part of the Q-Mode analysis is done as described in @klovan_algorithm_1971.
+
+Calculate a diagional matrix with the row-sum of squares:
+
+```{r}
+rowsum_square_diag <- function(data) {
+  # also including taking the sqrt and reciprocal here
+  (rowSums(data)**2)**-0.5 %>%
+  diag()
+}
+
+normalize_and_transform(original_data) %>%
+  rowsum_square_diag()
+```
+
+Calculate row-normalized data matrix:
+
+```{r}
+row_normalized_data <- function(data) {
+  norm_data <- normalize_and_transform(data)
+  as.matrix(rowsum_square_diag(norm_data)) %*%
+    as.matrix(norm_data)
+}
+
+row_normalized_data(original_data)
+```
+
+The row sums should be 1:
+
+```{r}
+row_normalized_data(original_data) %>%
+  rowSums()
+```
+
+Cosine-theta matrix:
+
+```{r}
+cosine_theta <- function(data) {
+row_normalized_data(data) %*%
+  t(row_normalized_data(data))
+}
+
+cosine_theta(original_data)
+```
+
+Eigenvalues and -vectors of the cosine-theta matrix:
+
+```{r}
+eigen(cosine_theta(original_data))
+```
+
+The eigenvectors are the unscaled principal component factor scores.
+
+Calculate the principal factor-loadings matrix $Q=U\Lambda^{-0.5}$:
+
+```{r}
+principal_factor_loadings <- function(data) {
+  eig <- eigen(cosine_theta(data))
+  u <- eig$vectors
+  lambda <- diag(eig$values**-0.5)
+  lambda[is.nan(lambda)] <- 0
+  u %*% lambda
+}
+
+principal_factor_loadings(original_data)
+```
+
+Calculate the principal factor-score matrix $F_p$:
+
+```{r}
+t(row_normalized_data(original_data)) %*%
+  principal_factor_loadings(original_data) %*%
+  diag(eigen(cosine_theta(original_data))$values**-1)
+
+```
+
+### CABFAC algorithm
+
+This algorithm was used to reduce the computational complexity of the task. It operates on fewer dimensions.
+
+```{r}
+cabfac_P <- function(data) {
+  t(row_normalized_data(data)) %*% row_normalized_data(data)
+}
+
+cabfac_Q <- function(data) {
+  u <- eigen(cabfac_P(data))$vectors
+  row_normalized_data(data) %*% u
+}
+
+row_normalized_data(original_data) %*% eigen(cabfac_P(original_data))$vectors
+```
+
+Unscaled scores:
+
+```{r}
+prcomp(cabfac_P(original_data), scale = F, center = F)
+
+eigen(cabfac_P(original_data))
+```
+
+Alternatively calculate it from `cabfac_Q`:
+
+```{r}
+t(row_normalized_data(original_data)) %*%
+  cabfac_Q(original_data) %*%
+  diag(eigen(cosine_theta(original_data))$values**-1)[1:3,1:3]
+  
+```
+
+Same result as above, but still not matching the values from @miesch_q-mode_1976 [, Table 4]
+
+The product of $a''_{ik}$ and $f''_{kj}$ should equal the normalized, transformed data.
+
+Calculated data:
+
+```{r}
+initial_loadings(original_data) %*% eigen(cabfac_P(original_data))$vectors %>% as_tibble()
+```
+
+Original data
+
+```{r}
+normalize_and_transform(original_data)
+```
+
+
+# References
