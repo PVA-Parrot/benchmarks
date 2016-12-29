@@ -16,6 +16,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 ```
 
+
 # Introduction
 
 This notebook serves as a reference implementation of the Q-Mode analysis in R as described by @miesch_q-mode_1976.
@@ -68,6 +69,8 @@ The range transformed data is identical to the data in @miesch_q-mode_1976 [, Ta
 
 ## Normalization factors $t_i$
 
+The normalization suggested byt @miesch_q-mode_1976 results in rows where the sum of squares equals 1 (in contrast to @klovan_algorithm_1971 where the simple sum equals 1).
+
 $t_i = \sqrt{\displaystyle\sum_{j}{x'^{2}_{ij}}}$
 
 ```{r}
@@ -81,13 +84,15 @@ normalization_factors <- function(data) {
 normalization_factors(original_data)
 ```
 
+The normalization factors are equal to those from @miesch_q-mode_1976 [, Table 1C].
+
 ## Normalized and transformed data
 
 
 ```{r}
 normalize_and_transform <- function(data) {
-  range_transformed(data) / 
-    normalization_factors(data)
+  as.matrix(range_transformed(data) / 
+    normalization_factors(data))
 }
 
 normalize_and_transform(original_data)
@@ -95,119 +100,157 @@ normalize_and_transform(original_data)
 
 These values also match the ones by @miesch_q-mode_1976 [, Table 1C].
 
+The sum of squares per row should equal 1:
+
+```{r}
+normalize_and_transform(original_data)**2 %>%
+  rowSums()
+```
+
+
 # Q-Mode Factor Analysis
 
-Initial loadings $a_{ij}$:
+## Initial loadings $a_{ij}$:
 
 ```{r}
 initial_loadings <- function(data) {
-  prcomp(normalize_and_transform(data), center = F, scale = F)$x
+  pca <- data %>%
+    normalize_and_transform() %>%
+    prcomp(center = F, scale = F)
+  pca$x
 }
-initial_loadings(original_data)
+initial_loadings(original_data) %>% as_tibble()
 ```
 
+The values equal those in @miesch_q-mode_1976 [, Table 4].
 
 ## Unscaled factor scores $f''_{kj}$
 
 The following part of the Q-Mode analysis is done as described in @klovan_algorithm_1971.
 
-Calculate a diagional matrix with the row-sum of squares:
+### Row normalization
+
+Calculate a diagonal matrix with the row-sum of squares:
 
 ```{r}
 rowsum_square_diag <- function(data) {
-  # also including taking the sqrt and reciprocal here
-  (rowSums(data)**2)**-0.5 %>%
-  diag()
+  data %>%
+    rowSums() %>%
+    (function(x){x**2}) %>%
+    diag()
 }
 
-normalize_and_transform(original_data) %>%
+original_data %>%
   rowsum_square_diag()
 ```
 
-Calculate row-normalized data matrix:
+Calculate row-normalized data matrix $W = D^{-1/2}X$:
 
 ```{r}
 row_normalized_data <- function(data) {
-  norm_data <- normalize_and_transform(data)
-  as.matrix(rowsum_square_diag(norm_data)) %*%
-    as.matrix(norm_data)
+  D <- rowsum_square_diag(data)
+  D_ <- D
+  diag(D_) <- diag(D_)**-0.5
+  X <- as.matrix(data)
+  D_ %*% X
 }
 
-row_normalized_data(original_data)
+row_normalized_data(range_transformed( original_data))
 ```
 
-The row sums should be 1:
+The simple row sums should be 1:
 
 ```{r}
-row_normalized_data(original_data) %>%
+original_data %>%
+  row_normalized_data() %>%
   rowSums()
 ```
 
-Cosine-theta matrix:
+### Normal Q-Mode
+
+Cosine-theta matrix $S = WW'$:
 
 ```{r}
 cosine_theta <- function(data) {
-row_normalized_data(data) %*%
-  t(row_normalized_data(data))
+  W <- row_normalized_data(data)
+  W %*% t(W)
 }
 
 cosine_theta(original_data)
 ```
 
-Eigenvalues and -vectors of the cosine-theta matrix:
+Eigenvalues of the cosine-theta matrix $S$:
 
 ```{r}
-eigen(cosine_theta(original_data))
+eigen(cosine_theta(original_data))$values
 ```
-
-The eigenvectors are the unscaled principal component factor scores.
 
 Calculate the principal factor-loadings matrix $Q=U\Lambda^{-0.5}$:
 
 ```{r}
 principal_factor_loadings <- function(data) {
-  eig <- eigen(cosine_theta(data))
-  u <- eig$vectors
-  lambda <- diag(eig$values**-0.5)
-  lambda[is.nan(lambda)] <- 0
-  u %*% lambda
+  S   <- cosine_theta(data)
+  eig <- eigen(S)
+  U   <- eig$vectors[,1:3]
+  A_  <- diag(eig$values[1:3]**-0.5)
+  U %*% A_
 }
 
 principal_factor_loadings(original_data)
 ```
 
-Calculate the principal factor-score matrix $F_p$:
+Calculate the principal factor-score matrix $F_p=W'Q\Lambda^{-1}$:
 
 ```{r}
-t(row_normalized_data(original_data)) %*%
-  principal_factor_loadings(original_data) %*%
-  diag(eigen(cosine_theta(original_data))$values**-1)
+principal_factor_score <- function(data) {
+  W_ <- t(row_normalized_data(data))
+  Q  <- principal_factor_loadings(data)
+  S  <- cosine_theta(data)
+  x  <- svd(S)$d[1:3]**-1
+  A_ <- diag(x)
+  W_ %*% Q %*% A_
+}
 
+t(principal_factor_score(normalize_and_transform( original_data)))
 ```
+
+These do not match with the values in Miesch at all.
 
 ### CABFAC algorithm
 
-This algorithm was used to reduce the computational complexity of the task. It operates on fewer dimensions.
+This algorithm was introduced to reduce the computational complexity of the task. It operates on fewer dimensions.
+
+$P = W'W$
+
+$Q = W \mathring{U}$
 
 ```{r}
 cabfac_P <- function(data) {
-  t(row_normalized_data(data)) %*% row_normalized_data(data)
+  W <- normalize_and_transform(data) 
+  t(W) %*% W
 }
 
 cabfac_Q <- function(data) {
-  u <- eigen(cabfac_P(data))$vectors
-  row_normalized_data(data) %*% u
+  W <- normalize_and_transform(data) 
+  P <- cabfac_P(data)
+  U_circ <- svd(P)$u
+  W %*% U_circ
 }
 
-row_normalized_data(original_data) %*% eigen(cabfac_P(original_data))$vectors
+cabfac_Q(original_data)
+cabfac_P(original_data)
 ```
 
-Unscaled scores:
+Unscaled scores $F_p$:
 
 ```{r}
-prcomp(cabfac_P(original_data), scale = F, center = F)
+unscaled_scores <- function(data) {
+  P <- cabfac_P(data)
+  svd(P)$u %>%
+    t()
+}
 
-eigen(cabfac_P(original_data))
+unscaled_scores(original_data)
 ```
 
 Alternatively calculate it from `cabfac_Q`:
@@ -215,24 +258,34 @@ Alternatively calculate it from `cabfac_Q`:
 ```{r}
 t(row_normalized_data(original_data)) %*%
   cabfac_Q(original_data) %*%
-  diag(eigen(cosine_theta(original_data))$values**-1)[1:3,1:3]
-  
+  diag(svd(cosine_theta(original_data))$d**-1)[1:3,1:3]
 ```
 
 Same result as above, but still not matching the values from @miesch_q-mode_1976 [, Table 4]
+
+
+# Validate results
+
+Comparison of eigenvalues (non-zero eigenvalues should be identical):
+
+```{r}
+svd(cabfac_P(original_data))$d
+
+svd(cosine_theta(original_data))$d
+```
 
 The product of $a''_{ik}$ and $f''_{kj}$ should equal the normalized, transformed data.
 
 Calculated data:
 
 ```{r}
-initial_loadings(original_data) %*% eigen(cabfac_P(original_data))$vectors %>% as_tibble()
+cabfac_Q(original_data) %*% unscaled_scores(original_data) %>% as_tibble()
 ```
 
-Original data
+Original data:
 
 ```{r}
-normalize_and_transform(original_data)
+normalize_and_transform(original_data) %>% as_tibble()
 ```
 
 
