@@ -166,13 +166,13 @@ original_data %>%
   rowSums()
 ```
 
-### Normal Q-Mode
+### Normal Q-Mode via Cosine-Theta
 
 Cosine-theta matrix $S = WW'$:
 
 ```{r}
 cosine_theta <- function(data) {
-  W <- row_normalized_data(data)
+  W <- normalize_and_transform(data)
   W %*% t(W)
 }
 
@@ -190,9 +190,9 @@ Calculate the principal factor-loadings matrix $Q=U\Lambda^{-0.5}$:
 ```{r}
 principal_factor_loadings <- function(data) {
   S   <- cosine_theta(data)
-  eig <- eigen(S)
-  U   <- eig$vectors[,1:3]
-  A_  <- diag(eig$values[1:3]**-0.5)
+  eig <- svd(S)
+  U   <- eig$u[,1:3]
+  A_  <- diag(eig$d[1:3]**-0.5)
   U %*% A_
 }
 
@@ -203,7 +203,9 @@ Calculate the principal factor-score matrix $F_p=W'Q\Lambda^{-1}$:
 
 ```{r}
 principal_factor_score <- function(data) {
-  W_ <- t(row_normalized_data(data))
+  W_ <- t(normalize_and_transform(data))
+  #correct results with cabfac_Q but wrong with principal_factor_loadings
+  Q  <- cabfac_Q(data)
   Q  <- principal_factor_loadings(data)
   S  <- cosine_theta(data)
   x  <- svd(S)$d[1:3]**-1
@@ -211,10 +213,10 @@ principal_factor_score <- function(data) {
   W_ %*% Q %*% A_
 }
 
-t(principal_factor_score(normalize_and_transform( original_data)))
+t(principal_factor_score(original_data))
 ```
 
-These do not match with the values in Miesch at all.
+These do not match with the values in Miesch at all. They do when using `cabfac_Q` (see above). Something might be wrong in `principal_factor_loadings`, which might be related to using a different normalization.
 
 ### CABFAC algorithm
 
@@ -256,12 +258,13 @@ unscaled_scores(original_data)
 Alternatively calculate it from `cabfac_Q`:
 
 ```{r}
-t(row_normalized_data(original_data)) %*%
+t(normalize_and_transform(original_data)) %*%
   cabfac_Q(original_data) %*%
-  diag(svd(cosine_theta(original_data))$d**-1)[1:3,1:3]
+  diag(svd(cosine_theta(original_data))$d**-1)[1:3,1:3] %>%
+  t()
 ```
 
-Same result as above, but still not matching the values from @miesch_q-mode_1976 [, Table 4]
+Same result as above, both matching the values from @miesch_q-mode_1976 [, Table 4]
 
 
 # Validate results
@@ -280,12 +283,32 @@ Calculated data:
 
 ```{r}
 cabfac_Q(original_data) %*% unscaled_scores(original_data) %>% as_tibble()
+
+principal_factor_loadings(original_data) %*% principal_factor_score(original_data)
 ```
 
 Original data:
 
 ```{r}
 normalize_and_transform(original_data) %>% as_tibble()
+```
+
+# Alternative calculations via prcomp
+
+```{r}
+pca <- prcomp(normalize_and_transform(original_data), scale = F, center = F)
+```
+
+Initial loadings $a''_{jk}$:
+
+```{r}
+pca$x
+```
+
+Unscaled scores $f''_{kj}$:
+
+```{r}
+t(pca$rotation)
 ```
 
 
